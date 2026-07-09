@@ -1,5 +1,5 @@
 ---
-title: Passthrough Resolver
+title: Passthrough Resolution
 description: A mechanism for resolvers to delegate queries to a previous resolver, enabling resolver upgrades without record migration.
 contributors:
   - jkm.eth
@@ -8,11 +8,11 @@ ensip:
   status: draft
 ---
 
-# ENSIP-XX: Passthrough Resolver 
+# ENSIP-X: Passthrough Resolution 
 
 ## Abstract
 
-This ENSIP defines a standard by which a resolver may designate another resolver as a "passthrough" resolver. When the resolver receives a resolution query for which it holds no record, it forwards the query to the passthrough resolver and returns the result to the caller. Because each passthrough target may itself designate a further passthrough resolver, resolvers of increasing functionality can be daisy-chained together, with the newest resolver able to answer queries for all records set on any downstream resolver in the chain.
+This ENSIP defines a standard by which a resolver may designate another resolver as a "passthrough" resolver. When the resolver receives a resolution query for which it holds no record, it forwards the query to the next resolver in the chain that supports the query type and returns the result to the caller. Because each passthrough target may itself designate a further passthrough resolver, resolvers of increasing functionality can be daisy-chained together, with the newest resolver able to answer queries for all records set on any downstream resolver in the chain.
 
 The standard resolution methods retain their existing signatures and forward silently, so the mechanism is invisible to existing ENS clients. Two new methods expose the passthrough resolver's address and query a resolver's own records without passthrough, making it possible to locate which resolver in a chain contains a given record.
 
@@ -22,7 +22,7 @@ The ENS Registry associates each node with exactly one resolver. Resolver capabi
 
 Today, a name owner who wishes to adopt a resolver with new functionality must deploy or select a new resolver contract, update the registry to point at it, and then re-set every existing record on the new contract. This operation can be costly and error-prone, which supresses the adoption of new resolver upgrades.
 
-This ENSIP removes the migration step entirely. The new resolver is deployed with its passthrough set to the old resolver's address, and the registry is updated to point at the new resolver. All previously-set records remain resolvable through the new resolver immediately, while new records (and updates to old ones) are written to the new resolver. The upgrade can be repeated indefinitely, with each new resolver chaining to its predecessor.
+This ENSIP removes the migration step entirely. The new resolver is deployed with its passthrough set to the old resolver's address, and the registry is updated to point at the new resolver. All previously-set records remain resolvable through the new resolver, while new records (and updates to old ones) are written to the new resolver. The upgrade can be repeated indefinitely, with each new resolver chaining to its predecessor.
 
 ## Specification
 
@@ -30,11 +30,11 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ### Overview
 
-A passthrough resolver is a resolver contract that stores the address of at most one other resolver, its *passthrough resolver*. A sequence of resolvers linked in this way is a *resolver chain*, beginning with the *head* resolver (the one set in the ENS Registry) and ending with a *tail* resolver (one which does not implement this specification, or which designates no passthrough resolver).
+Passthrough resolution involves a resolver contract that stores the address of at most one other resolver, its *passthrough resolver*. A sequence of resolvers linked in this way is a *resolver chain*, beginning with the *head resolver* (the one set in the ENS Registry) and ending with a *tail resolver* (one which does not implement this specification, or which designates no passthrough resolver).
 
 ### Resolver Interface
 
-A passthrough resolver MUST implement the following interface:
+Resolvers that offer passthrough resolution MUST implement the following interface:
 
 ```solidity
 interface IPassthroughResolver {
@@ -61,11 +61,14 @@ The [EIP-165](https://eips.ethereum.org/EIPS/eip-165) interface ID of this inter
 
 ### Passthrough Resolution
 
-When a passthrough resolver receives a call to a resolution method it supports, it MUST behave as follows:
+When a resolver following this specification receives a call to a resolution method it supports, it MUST perform the following steps in this order (if a step returns a value, do not continue to the next step):
 
-1. If the resolver holds a record answering the query in its own storage, it MUST return that record.
-2. Otherwise, if a passthrough resolver is set, the resolver MUST call `supportsInterface()` on the passthrough resolver with the [EIP-165](https://eips.ethereum.org/EIPS/eip-165) interface ID of the method being queried. If `supportsInterface()` returns true, the resolver MUST forward the identical call (same function selector and arguments) to the passthrough resolver and return the forwarded call's return value unchanged.
-4. Otherwise, the chain is considered ended for this query and the resolver MUST return the zero value for the method's return type.
+1. If the resolver holds a non-zero record answering the query in its own storage, return that record.
+2. If the resolver has no passthrough resolver set, return the zero value for the method's return type.
+3. Call `supportsInterface()` on the passthrough resolver with the [EIP-165](https://eips.ethereum.org/EIPS/eip-165) interface ID of the method being queried. If the passthrough resolver implements the method, forward the identical call (same function selector and arguments) to the passthrough resolver and return the forwarded call's return value unchanged.
+4. Call `supportsInterface()` on the passthrough resolver with the [EIP-165](https://eips.ethereum.org/EIPS/eip-165) interface ID for passthrough resolution (this ENSIP). If the passthrough resolver does not implement passthrough resolution, return the zero value for the method's return type.
+5. Call `passthroughResolver()` on the passthrough resolver to get the address of the next resolver in the chain. If the next resolver is the zero address, return the zero value for the method's return type.
+6. Return to step 3, using the latest passthrough resolver address, until the chain is ended.
 
 Because the forwarded call is identical in signature and semantics to the original, the passthrough target may be any existing resolver. It does not need to implement or be aware of this specification. If the target itself implements this specification, resolution recurses down the chain until a resolver holds the record or the chain ends, and the value found (or the zero value) propagates back to the original caller.
 
